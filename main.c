@@ -2,10 +2,12 @@
 #include <stdlib.h>
 #include <time.h>
 
+int ram[] = {1, 5, 10, 15, 20};
+
 // ======================= Structs =========================
 typedef struct {
     int *endereco;   // Tag do bloco
-    int counter;    // Usado em LRU ou FIFO
+    int indice;    // Usado em LRU ou FIFO
     struct CacheLine* next;
 } CacheLine;
 
@@ -41,7 +43,7 @@ int main() {
     int mappingPolicy, replacementPolicy = 0;
 
     printf("=== Cache Simulator ===\n");
-
+    
     mappingPolicy = menuMappingPolicy();
 
     if (mappingPolicy == 2 || mappingPolicy == 3) {
@@ -54,16 +56,17 @@ int main() {
 }
 
 
-void insert(CacheLine **list) {
+void insert(CacheLine **list, int* endereco, int indice) {
 
     CacheLine *novo = malloc(sizeof(CacheLine));
+    novo->indice = indice;
 
     if(!novo) {
         printf("Erro ao alocar memoria!");
     }
 
     if(*list == NULL) {
-        novo->endereco = ;
+        novo->endereco = endereco;
         novo->next = NULL;
         *list = novo;
     } else {
@@ -73,7 +76,7 @@ void insert(CacheLine **list) {
             aux = aux->next;
         }
 
-        novo->endereco = ;
+        novo->endereco = endereco;
         novo->next = NULL;
         aux->next = novo;
     }
@@ -90,16 +93,14 @@ void erase(CacheLine **list) {
 
 Cache *createCache(int numLines, int setSize) {
     Cache *cache = (Cache*) malloc(sizeof(Cache));
+    cache->lines = NULL;
     cache->numLines = numLines;
     cache->setSize = setSize;
     cache->hits = 0;
     cache->misses = 0;
 
-    cache->lines = (CacheLine*) malloc(sizeof(CacheLine) * numLines);
-    for (int i = 0; i < numLines; i++) {
-        cache->lines[i].valid = 0;
-        cache->lines[i].tag = -1;
-        cache->lines[i].counter = 0;
+    for (int i = 0; i < setSize; i++) {
+        insert(&(cache->lines), NULL, i);
     }
 
     return cache;
