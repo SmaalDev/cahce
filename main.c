@@ -4,8 +4,7 @@
 
 // ======================= Structs =========================
 typedef struct {
-    int valid;      // 0 = inválido, 1 = válido
-    int tag;        // Tag do bloco
+    int *endereco;   // Tag do bloco
     int counter;    // Usado em LRU ou FIFO
     struct CacheLine* next;
 } CacheLine;
@@ -52,6 +51,38 @@ int main() {
     startSimulation(mappingPolicy, replacementPolicy);
 
     return 0;
+}
+
+
+void insert(CacheLine **list) {
+
+    CacheLine *novo = malloc(sizeof(CacheLine));
+
+    if(!novo) {
+        printf("Erro ao alocar memoria!");
+    }
+
+    if(*list == NULL) {
+        novo->endereco = ;
+        novo->next = NULL;
+        *list = novo;
+    } else {
+        CacheLine *aux = *list;
+
+        while ( aux->next != NULL) {
+            aux = aux->next;
+        }
+
+        novo->endereco = ;
+        novo->next = NULL;
+        aux->next = novo;
+    }
+}
+
+void erase(CacheLine **list) {
+    CacheLine *aux = *list;
+    list = aux->next;
+    free(aux);
 }
 
 // =============================================================
