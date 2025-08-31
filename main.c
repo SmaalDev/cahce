@@ -7,6 +7,7 @@ typedef struct {
     int valid;      // 0 = inválido, 1 = válido
     int tag;        // Tag do bloco
     int counter;    // Usado em LRU ou FIFO
+    struct CacheLine* next;
 } CacheLine;
 
 typedef struct {
