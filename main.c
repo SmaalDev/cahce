@@ -18,6 +18,7 @@ typedef struct {
     CacheLine *lines;   // Array de linhas
     int hits;
     int misses;
+    int filled;
 } Cache;
 
 // ======================= Prototypes =========================
@@ -27,8 +28,8 @@ void printStats(Cache *cache);
 
 void startSimulation(int mappingPolicy, int replacementPolicy);
 
-void directMapping(Cache *cache);
-void associativeMapping(Cache *cache, int replacementPolicy);
+void directMapping(Cache *cache, int value);
+void associativeMapping(Cache *cache, int replacementPolicy, int address);
 void setAssociativeMapping(Cache *cache, int replacementPolicy);
 
 void replacementFIFO(Cache *cache, int setIndex);
@@ -112,6 +113,7 @@ Cache *createCache(int numLines, int setSize) {
     cache->setSize = setSize;
     cache->hits = 0;
     cache->misses = 0;
+    cache->filled = 0;
 
     for (int i = 0; i < setSize; i++) {
         insert(&(cache->lines), NULL, i);
@@ -200,7 +202,7 @@ int hash(int *endereco, int valueHash){
     return *endereco % valueHash;
 }
 
-int* searcRam(int value) {
+int* searchRam(int value) {
     for(int i = 0; i < TAM_RAM; i++) {
         if(value == *(RAM + i)) {
             return (RAM + i);
@@ -209,7 +211,7 @@ int* searcRam(int value) {
     return NULL;
 }
 
-int searchCache(CacheLine **list, int value) {
+int* searchCache(CacheLine **list, int value) {
     CacheLine *aux = *list;
 
     while (*(aux->endereco) != value && aux->next != NULL) {
@@ -219,9 +221,7 @@ int searchCache(CacheLine **list, int value) {
     if(aux->next != NULL && *(aux->endereco) == value) {
         return value;
     } else {
-        int *resultSerchRam = searcRam(value);
-        insert(list, resultSerchRam, hash(resultSerchRam, 8));
-        return *resultSerchRam;
+        return searcRam(value);
     }
 }
  
@@ -230,23 +230,18 @@ void directMapping(Cache *cache, int value) {
     
 }
 
-void associativeMapping(Cache *cache, int replacementPolicy) {
+void associativeMapping(Cache *cache, int replacementPolicy, int address) {
     printf(">> Using Fully Associative Mapping...\n");
 
-    if (replacementPolicy == 1) {
-        replacementFIFO(cache, 0);
-    }
-    else {
-        if (replacementPolicy == 2) {
-            replacementLRU(cache, 0);
+    if (cache->filled == cache->numLines) {
+        switch (replacementPolicy) {
+            case 1: replacementFIFO(cache, 0); break;
+            case 2: replacementLRU(cache, 0); break;
+            case 3: replacementRandom(cache, 0);
         }
-        else {
-            if (replacementPolicy == 3) {
-                replacementRandom(cache, 0);
-            }
-        }
-    }
+    } else {
 
+    }
     // TODO: Implementar a lógica associativa
 }
 
