@@ -224,6 +224,14 @@ int* searchCache(CacheLine **list, int value) {
         return searcRam(value);
     }
 }
+
+CacheLine *serchFinalyList(CacheLine **list) {
+    CacheLine *aux = *list;
+    while (aux->endereco != NULL) {
+        aux = aux->next;
+    }
+    return aux;
+}
  
 void directMapping(Cache *cache, int value) {
     printf(">> Using Direct Mapping...\n");
@@ -240,9 +248,10 @@ void associativeMapping(Cache *cache, int replacementPolicy, int address) {
             case 3: replacementRandom(cache, 0);
         }
     } else {
-
+        CacheLine* target = serchFinalyList(cache);
+        target->endereco = address;
+        target->indice = cache->filled++;
     }
-    // TODO: Implementar a lógica associativa
 }
 
 void setAssociativeMapping(Cache *cache, int replacementPolicy) {
@@ -270,6 +279,7 @@ void setAssociativeMapping(Cache *cache, int replacementPolicy) {
 void replacementFIFO(Cache *cache, int setIndex) {
     printf(">> Replacement Policy: FIFO\n");
     // TODO: Implementar substituição FIFO dentro do conjunto
+
 }
 
 void replacementLRU(Cache *cache, int setIndex) {
