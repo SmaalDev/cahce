@@ -2,13 +2,14 @@
 #include <stdlib.h>
 #include <time.h>
 
-int ram[] = {1, 5, 10, 15, 20};
+int RAM[] = {1, 5, 10, 15, 20};
+int TAM_RAM = sizeof(RAM)/sizeof(int);
 
 // ======================= Structs =========================
-typedef struct {
+typedef struct line {
     int *endereco;   // Tag do bloco
     int indice;    // Usado em LRU ou FIFO
-    struct CacheLine* next;
+    struct line* next;
 } CacheLine;
 
 typedef struct {
@@ -58,33 +59,46 @@ int main() {
 
 void insert(CacheLine **list, int* endereco, int indice) {
 
-    CacheLine *novo = malloc(sizeof(CacheLine));
-    novo->indice = indice;
+    if(endereco != NULL){
 
-    if(!novo) {
-        printf("Erro ao alocar memoria!");
-    }
-
-    if(*list == NULL) {
-        novo->endereco = endereco;
-        novo->next = NULL;
-        *list = novo;
-    } else {
         CacheLine *aux = *list;
 
-        while ( aux->next != NULL) {
+        while (aux->indice != indice && aux->endereco != NULL)
             aux = aux->next;
+
+        aux->endereco = endereco;
+        
+    } else {
+
+        CacheLine *novo = malloc(sizeof(CacheLine));
+        novo->indice = indice;
+
+        if(!novo) {
+            printf("Erro ao alocar memoria!");
+            return;
         }
 
-        novo->endereco = endereco;
-        novo->next = NULL;
-        aux->next = novo;
+        if(*list == NULL) {
+            novo->endereco = endereco;
+            novo->next = NULL;
+            *list = novo;
+        } else {
+            CacheLine *aux = *list;
+
+            while ( aux->next != NULL) {
+                aux = aux->next;
+            }
+
+            novo->endereco = endereco;
+            novo->next = NULL;
+            aux->next = novo;
+        }
     }
 }
 
 void erase(CacheLine **list) {
     CacheLine *aux = *list;
-    list = aux->next;
+    *list = aux->next;
     free(aux);
 }
 
@@ -153,8 +167,10 @@ void startSimulation(int mappingPolicy, int replacementPolicy) {
     // Exemplo: vamos criar uma cache com 8 linhas, conjuntos de 2
     Cache *cache = createCache(8, (mappingPolicy == 3) ? 2 : 1);
 
+    int value = 5;
+
     if (mappingPolicy == 1) {
-        directMapping(cache);
+        directMapping(cache, value);
         printf(">> Direct mapping does not use replacement policies.\n");
     }
     else {
@@ -180,9 +196,38 @@ void startSimulation(int mappingPolicy, int replacementPolicy) {
 // =============================================================
 // Funções de mapeamento
 
-void directMapping(Cache *cache) {
+int hash(int *endereco, int valueHash){
+    return *endereco % valueHash;
+}
+
+int* searcRam(int value) {
+    for(int i = 0; i < TAM_RAM; i++) {
+        if(value == *(RAM + i)) {
+            return (RAM + i);
+        }
+    }
+    return NULL;
+}
+
+int searchCache(CacheLine **list, int value) {
+    CacheLine *aux = *list;
+
+    while (*(aux->endereco) != value && aux->next != NULL) {
+        aux = aux->next;
+    }
+    
+    if(aux->next != NULL && *(aux->endereco) == value) {
+        return value;
+    } else {
+        int *resultSerchRam = searcRam(value);
+        insert(list, resultSerchRam, hash(resultSerchRam, 8));
+        return *resultSerchRam;
+    }
+}
+ 
+void directMapping(Cache *cache, int value) {
     printf(">> Using Direct Mapping...\n");
-    // TODO: Implementar a lógica de mapeamento direto
+    
 }
 
 void associativeMapping(Cache *cache, int replacementPolicy) {
@@ -214,8 +259,7 @@ void setAssociativeMapping(Cache *cache, int replacementPolicy) {
     else {
         if (replacementPolicy == 2) {
             replacementLRU(cache, 0);
-        }
-        else {
+        } else {
             if (replacementPolicy == 3) {
                 replacementRandom(cache, 0);
             }
