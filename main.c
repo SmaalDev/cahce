@@ -5,6 +5,8 @@
 #include "mapping.h"
 #include "utils.h"
 
+#define NUMBER_TRACE 20
+
 int main(void) {
     srand((unsigned int)time(NULL));
 
@@ -16,7 +18,10 @@ int main(void) {
 
     Cache* cache = createCache(8, (MappingPolicy)mapping, (ReplacementPolicy)replacement);
 
-    int trace[] = {1,5,10,1,20,15,5,10,20,1,5,5,15,10,20,1,15,10,5,20};
+    int trace[NUMBER_TRACE];
+    for (int i = 0; i < NUMBER_TRACE; i++) {
+        trace[i] = rand() % 20;
+    }
     int nTrace = sizeof(trace)/sizeof(int);
 
     printf("\n--- Iniciando Simulacao ---\n");
