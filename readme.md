@@ -1,3 +1,7 @@
+compile com: gcc main.c cache.c mapping.c replacement.c utils.c -o simulator.exe
+
+execute: .\simulator.exe
+
 A ideia é imitar o funcionamento de uma memória cache real: acessamos endereços, verificamos se eles estão na cache, contamos hits (acertos) e misses (falhas), e, quando necessário, aplicamos uma política de substituição para decidir qual linha da cache será sobrescrita.
 
 📌 Estrutura do programa
