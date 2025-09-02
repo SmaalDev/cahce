@@ -160,4 +160,3 @@ Se miss: aplica política de substituição e carrega o endereço.
 
 No final: imprime estatísticas.
 
-Quer que eu desenhe um passo a passo gráfico mostrando como os acessos entram e saem da cache (tipo “estado da cache a cada acesso”)? Isso ajuda muito a visualizar o funcionamento.
