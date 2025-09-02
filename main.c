@@ -1,294 +1,336 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <stdbool.h>
 
-int RAM[] = {1, 5, 10, 15, 20};
-int TAM_RAM = sizeof(RAM)/sizeof(int);
+// ======================= RAM de exemplo =========================
+static int RAM[] = {1, 5, 10, 15, 20};
+static const int TAM_RAM = sizeof(RAM) / sizeof(int);
 
-// ======================= Structs =========================
-typedef struct line {
-    int *endereco;   // Tag do bloco
-    int indice;    // Usado em LRU ou FIFO
-    struct line* next;
+// ======================= Políticas ==============================
+typedef enum {
+    MAP_DIRECT = 1,
+    MAP_FULLY_ASSOC = 2,
+    MAP_SET_ASSOC = 3
+} MappingPolicy;
+
+typedef enum {
+    REP_FIFO = 1,
+    REP_LRU  = 2,
+    REP_RANDOM = 3
+} ReplacementPolicy;
+
+// ======================= Estruturas =============================
+typedef struct {
+    int tag;                 // "endereço/bloco" (tag)
+    bool valid;              // linha válida?
+    unsigned long lastUsed;  // p/ LRU
+    unsigned long fifoSeq;   // p/ FIFO (ordem de chegada)
 } CacheLine;
 
 typedef struct {
-    int numLines;       // Total de linhas
-    int setSize;        // Linhas por conjunto
-    CacheLine *lines;   // Array de linhas
+    CacheLine* lines;        // vetor de "ways"
+} CacheSet;
+
+typedef struct {
+    int numLines;            // linhas totais
+    int setSize;             // vias (ways) por conjunto
+    int numSets;             // quantidade de conjuntos
+    MappingPolicy mapping;
+    ReplacementPolicy replacement;
+
+    CacheSet* sets;          // vetor de conjuntos
+    unsigned long clock;     // contador global (tempo lógico)
     int hits;
     int misses;
-    int filled;
 } Cache;
 
-// ======================= Prototypes =========================
-Cache *createCache(int numLines, int setSize);
-void freeCache(Cache *cache);
-void printStats(Cache *cache);
+// ======================= Protótipos =============================
+Cache* createCache(int numLines, MappingPolicy mapping, ReplacementPolicy replacement);
+void   freeCache(Cache* c);
+void   printStats(const Cache* c);
+void   simulate(Cache* c, const int* trace, int nTrace);
 
-void startSimulation(int mappingPolicy, int replacementPolicy);
+// Acesso (resolve hit/miss + substituição)
+void   accessAddress(Cache* c, int address);
 
-void directMapping(Cache *cache, int value);
-void associativeMapping(Cache *cache, int replacementPolicy, int address);
-void setAssociativeMapping(Cache *cache, int replacementPolicy);
+// Helpers de substituição
+int    chooseVictim(const Cache* c, const CacheSet* set);
+int    chooseVictimFIFO(const CacheSet* set, int ways);
+int    chooseVictimLRU(const CacheSet* set, int ways);
+int    chooseVictimRandom(const CacheSet* set, int ways);
+int    findLine(const CacheSet* set, int ways, int tag);
+int    findEmpty(const CacheSet* set, int ways);
 
-void replacementFIFO(Cache *cache, int setIndex);
-void replacementLRU(Cache *cache, int setIndex);
-void replacementRandom(Cache *cache, int setIndex);
+// Menus
+int    menuMappingPolicy(void);
+int    menuReplacementPolicy(void);
 
-int menuMappingPolicy();
-int menuReplacementPolicy();
-
-// =============================================================
-
-int main() {
-    int mappingPolicy, replacementPolicy = 0;
-
-    printf("=== Cache Simulator ===\n");
-    
-    mappingPolicy = menuMappingPolicy();
-
-    if (mappingPolicy == 2 || mappingPolicy == 3) {
-        replacementPolicy = menuReplacementPolicy();
+// ======================= Implementação ==========================
+Cache* createCache(int numLines, MappingPolicy mapping, ReplacementPolicy replacement) {
+    Cache* c = (Cache*)malloc(sizeof(Cache));
+    if (!c) {
+        fprintf(stderr, "Erro ao alocar Cache\n");
+        exit(EXIT_FAILURE);
     }
 
-    startSimulation(mappingPolicy, replacementPolicy);
+    c->numLines = numLines;
+    c->mapping = mapping;
+    c->replacement = replacement;
+    c->clock = 0;
+    c->hits = 0;
+    c->misses = 0;
 
-    return 0;
+    // Definição de vias por conjunto conforme mapeamento
+    if (mapping == MAP_DIRECT) {
+        c->setSize = 1;                 // direto: 1 via
+    } else if (mapping == MAP_FULLY_ASSOC) {
+        c->setSize = numLines;          // totalmente associativo: 1 conjunto, N vias
+    } else { // MAP_SET_ASSOC
+        c->setSize = 2;                 // conjunto-associativo com 2 vias (padrão)
+    }
+
+    // Quantidade de conjuntos
+    c->numSets = numLines / c->setSize;
+    if (c->numSets <= 0 || numLines % c->setSize != 0) {
+        fprintf(stderr, "Configuração invalida: numLines=%d, setSize=%d\n", numLines, c->setSize);
+        free(c);
+        exit(EXIT_FAILURE);
+    }
+
+    c->sets = (CacheSet*)calloc(c->numSets, sizeof(CacheSet));
+    if (!c->sets) {
+        fprintf(stderr, "Erro ao alocar conjuntos\n");
+        free(c);
+        exit(EXIT_FAILURE);
+    }
+
+    for (int s = 0; s < c->numSets; ++s) {
+        c->sets[s].lines = (CacheLine*)calloc(c->setSize, sizeof(CacheLine));
+        if (!c->sets[s].lines) {
+            fprintf(stderr, "Erro ao alocar linhas do conjunto %d\n", s);
+            // Liberação parcial
+            for (int k = 0; k < s; ++k) free(c->sets[k].lines);
+            free(c->sets);
+            free(c);
+            exit(EXIT_FAILURE);
+        }
+        // Inicializa linhas
+        for (int w = 0; w < c->setSize; ++w) {
+            c->sets[s].lines[w].valid = false;
+            c->sets[s].lines[w].tag = 0;
+            c->sets[s].lines[w].lastUsed = 0;
+            c->sets[s].lines[w].fifoSeq = 0;
+        }
+    }
+
+    return c;
 }
 
+void freeCache(Cache* c) {
+    if (!c) return;
+    for (int s = 0; s < c->numSets; ++s) {
+        free(c->sets[s].lines);
+    }
+    free(c->sets);
+    free(c);
+}
 
-void insert(CacheLine **list, int* endereco, int indice) {
-
-    if(endereco != NULL){
-
-        CacheLine *aux = *list;
-
-        while (aux->indice != indice && aux->endereco != NULL)
-            aux = aux->next;
-
-        aux->endereco = endereco;
-        
+void printStats(const Cache* c) {
+    printf("\n=== Resultados da Simulacao ===\n");
+    printf("Linhas totais: %d | Conjuntos: %d | Vias por conjunto: %d\n",
+           c->numLines, c->numSets, c->setSize);
+    printf("Politica de Mapeamento: %s\n",
+           (c->mapping == MAP_DIRECT) ? "Direto" :
+           (c->mapping == MAP_FULLY_ASSOC) ? "Totalmente Associativo" :
+           "Conjunto-Associativo (2 vias)");
+    if (c->mapping != MAP_DIRECT) {
+        printf("Politica de Substituicao: %s\n",
+               (c->replacement == REP_FIFO) ? "FIFO" :
+               (c->replacement == REP_LRU) ? "LRU" :
+               "Random");
     } else {
+        printf("Politica de Substituicao: (nao se aplica ao Direto)\n");
+    }
 
-        CacheLine *novo = malloc(sizeof(CacheLine));
-        novo->indice = indice;
+    printf("Hits:   %d\n", c->hits);
+    printf("Misses: %d\n", c->misses);
+    int total = c->hits + c->misses;
+    double hitRate = (total > 0) ? (100.0 * c->hits / total) : 0.0;
+    printf("Taxa de acerto: %.2f%%\n", hitRate);
+}
 
-        if(!novo) {
-            printf("Erro ao alocar memoria!");
-            return;
+static inline int computeSetIndex(const Cache* c, int tag) {
+    // Direto: numSets == numLines, setSize == 1, index = tag % numSets
+    // Totalmente Associativo: numSets == 1, index = 0
+    // Conjunto-Associativo: numSets = numLines / setSize, index = tag % numSets
+    return tag % c->numSets;
+}
+
+int findLine(const CacheSet* set, int ways, int tag) {
+    for (int i = 0; i < ways; ++i) {
+        if (set->lines[i].valid && set->lines[i].tag == tag) {
+            return i;
         }
+    }
+    return -1;
+}
 
-        if(*list == NULL) {
-            novo->endereco = endereco;
-            novo->next = NULL;
-            *list = novo;
-        } else {
-            CacheLine *aux = *list;
+int findEmpty(const CacheSet* set, int ways) {
+    for (int i = 0; i < ways; ++i) {
+        if (!set->lines[i].valid) return i;
+    }
+    return -1;
+}
 
-            while ( aux->next != NULL) {
-                aux = aux->next;
-            }
-
-            novo->endereco = endereco;
-            novo->next = NULL;
-            aux->next = novo;
+int chooseVictimFIFO(const CacheSet* set, int ways) {
+    // Menor fifoSeq -> mais antigo
+    unsigned long bestSeq = (unsigned long)(-1);
+    int victim = 0;
+    for (int i = 0; i < ways; ++i) {
+        if (!set->lines[i].valid) return i;
+        if (set->lines[i].fifoSeq < bestSeq) {
+            bestSeq = set->lines[i].fifoSeq;
+            victim = i;
         }
+    }
+    return victim;
+}
+
+int chooseVictimLRU(const CacheSet* set, int ways) {
+    // Menor lastUsed -> menos recentemente usado
+    unsigned long best = (unsigned long)(-1);
+    int victim = 0;
+    for (int i = 0; i < ways; ++i) {
+        if (!set->lines[i].valid) return i;
+        if (set->lines[i].lastUsed < best) {
+            best = set->lines[i].lastUsed;
+            victim = i;
+        }
+    }
+    return victim;
+}
+
+int chooseVictimRandom(const CacheSet* set, int ways) {
+    // Se existir vazio, usa o vazio; senao escolhe aleatório entre [0, ways-1]
+    int empty = findEmpty(set, ways);
+    if (empty >= 0) return empty;
+    return rand() % ways;
+}
+
+int chooseVictim(const Cache* c, const CacheSet* set) {
+    switch (c->replacement) {
+        case REP_FIFO:   return chooseVictimFIFO(set, c->setSize);
+        case REP_LRU:    return chooseVictimLRU(set, c->setSize);
+        case REP_RANDOM: return chooseVictimRandom(set, c->setSize);
+        default:         return 0;
     }
 }
 
-void erase(CacheLine **list) {
-    CacheLine *aux = *list;
-    *list = aux->next;
-    free(aux);
-}
+void accessAddress(Cache* c, int address) {
+    // Neste simulador, "tag" = valor de endereço (sem offsets/bits de bloco)
+    int tag = address;
 
-// =============================================================
-// Funções auxiliares comuns
+    int setIdx = computeSetIndex(c, tag);
+    CacheSet* set = &c->sets[setIdx];
 
-Cache *createCache(int numLines, int setSize) {
-    Cache *cache = (Cache*) malloc(sizeof(Cache));
-    cache->lines = NULL;
-    cache->numLines = numLines;
-    cache->setSize = setSize;
-    cache->hits = 0;
-    cache->misses = 0;
-    cache->filled = 0;
+    c->clock++; // avança tempo lógico
 
-    for (int i = 0; i < setSize; i++) {
-        insert(&(cache->lines), NULL, i);
+    // Procura hit
+    int lineIdx = findLine(set, c->setSize, tag);
+    if (lineIdx >= 0) {
+        // HIT
+        c->hits++;
+        set->lines[lineIdx].lastUsed = c->clock; // atualiza p/ LRU
+        // FIFO não atualiza ordem no hit (estritamente), Random também não
+        return;
     }
 
-    return cache;
+    // MISS
+    c->misses++;
+
+    if (c->mapping == MAP_DIRECT) {
+        // Direto: sempre 1 via, a "vítima" é a única linha
+        CacheLine* line = &set->lines[0];
+        line->tag = tag;
+        line->valid = true;
+        line->lastUsed = c->clock;
+        line->fifoSeq = c->clock; // para fins de debug, mantém a sequência
+        return;
+    }
+
+    // Associativo ou Conjunto-Associativo: escolher vítima conforme política
+    int victim = chooseVictim(c, set);
+    set->lines[victim].tag = tag;
+    set->lines[victim].valid = true;
+    set->lines[victim].lastUsed = c->clock;
+    set->lines[victim].fifoSeq = c->clock;
 }
 
-void freeCache(Cache *cache) {
-    free(cache->lines);
-    free(cache);
+void simulate(Cache* c, const int* trace, int nTrace) {
+    for (int i = 0; i < nTrace; ++i) {
+        // Somente acessa valores que existem na RAM de exemplo
+        int addr = trace[i];
+        bool inRam = false;
+        for (int k = 0; k < TAM_RAM; ++k) {
+            if (RAM[k] == addr) { inRam = true; break; }
+        }
+        if (!inRam) continue; // ignora acessos inválidos nesta demo
+        accessAddress(c, addr);
+    }
 }
 
-void printStats(Cache *cache) {
-    printf("\n=== Simulation Results ===\n");
-    printf("Hits: %d\n", cache->hits);
-    printf("Misses: %d\n", cache->misses);
-    float hitRate = (float) cache->hits / (cache->hits + cache->misses);
-    printf("Hit Rate: %.2f%%\n", hitRate * 100);
-}
-
-// =============================================================
-// Menu
-
-int menuMappingPolicy() {
+// ======================= Menus ==============================
+int menuMappingPolicy(void) {
     int option;
-    printf("\nChoose Mapping Policy:\n");
-    printf("1 - Direct Mapping\n");
-    printf("2 - Fully Associative Mapping\n");
-    printf("3 - Set-Associative Mapping\n");
-    printf("Option: ");
-    scanf("%d", &option);
+    printf("\nEscolha a Politica de Mapeamento:\n");
+    printf("1 - Direto\n");
+    printf("2 - Totalmente Associativo\n");
+    printf("3 - Conjunto-Associativo (2 vias)\n");
+    printf("Opcao: ");
+    if (scanf("%d", &option) != 1) exit(EXIT_FAILURE);
     return option;
 }
 
-int menuReplacementPolicy() {
+int menuReplacementPolicy(void) {
     int option;
-    printf("\nChoose Replacement Policy:\n");
+    printf("\nEscolha a Politica de Substituicao:\n");
     printf("1 - FIFO\n");
     printf("2 - LRU\n");
     printf("3 - Random\n");
-    printf("Option: ");
-    scanf("%d", &option);
+    printf("Opcao: ");
+    if (scanf("%d", &option) != 1) exit(EXIT_FAILURE);
     return option;
 }
 
-// =============================================================
-// Controle da simulação
+// ======================= main ===============================
+int main(void) {
+    srand((unsigned int)time(NULL));
 
-void startSimulation(int mappingPolicy, int replacementPolicy) {
-    printf("\n--- Starting Simulation ---\n");
+    printf("=== Simulador de Cache ===\n");
+    int mapping = menuMappingPolicy();
 
-    // Exemplo: vamos criar uma cache com 8 linhas, conjuntos de 2
-    Cache *cache = createCache(8, (mappingPolicy == 3) ? 2 : 1);
-
-    int value = 5;
-
-    if (mappingPolicy == 1) {
-        directMapping(cache, value);
-        printf(">> Direct mapping does not use replacement policies.\n");
-    }
-    else {
-        if (mappingPolicy == 2) {
-            associativeMapping(cache, replacementPolicy);
-        }
-        else {
-            if (mappingPolicy == 3) {
-                setAssociativeMapping(cache, replacementPolicy);
-            }
-            else {
-                printf("Invalid mapping policy!\n");
-                freeCache(cache);
-                return;
-            }
-        }
+    int replacement = REP_FIFO;
+    if (mapping == MAP_FULLY_ASSOC || mapping == MAP_SET_ASSOC) {
+        replacement = menuReplacementPolicy();
+    } else {
+        printf("\n(Mapeamento Direto nao requer politica de substituicao.)\n");
     }
 
+    // Configuracao padrão: 8 linhas totais
+    // Direto: 8 conjuntos x 1 via
+    // Totalmente associativo: 1 conjunto x 8 vias
+    // Conjunto-associativo: 4 conjuntos x 2 vias
+    Cache* cache = createCache(8, (MappingPolicy)mapping, (ReplacementPolicy)replacement);
+
+    // Trace de exemplo (edite à vontade)
+    int trace[] = {1,5,10,1,20,15,5,10,20,1,5,5,15,10,20,1,15,10,5,20};
+    int nTrace = sizeof(trace)/sizeof(int);
+
+    printf("\n--- Iniciando Simulacao ---\n");
+    simulate(cache, trace, nTrace);
     printStats(cache);
+
     freeCache(cache);
-}
-
-// =============================================================
-// Funções de mapeamento
-
-int hash(int *endereco, int valueHash){
-    return *endereco % valueHash;
-}
-
-int* searchRam(int value) {
-    for(int i = 0; i < TAM_RAM; i++) {
-        if(value == *(RAM + i)) {
-            return (RAM + i);
-        }
-    }
-    return NULL;
-}
-
-int* searchCache(CacheLine **list, int value) {
-    CacheLine *aux = *list;
-
-    while (*(aux->endereco) != value && aux->next != NULL) {
-        aux = aux->next;
-    }
-    
-    if(aux->next != NULL && *(aux->endereco) == value) {
-        return value;
-    } else {
-        return searcRam(value);
-    }
-}
-
-CacheLine *serchFinalyList(CacheLine **list) {
-    CacheLine *aux = *list;
-    while (aux->endereco != NULL) {
-        aux = aux->next;
-    }
-    return aux;
-}
- 
-void directMapping(Cache *cache, int value) {
-    printf(">> Using Direct Mapping...\n");
-    
-}
-
-void associativeMapping(Cache *cache, int replacementPolicy, int address) {
-    printf(">> Using Fully Associative Mapping...\n");
-
-    if (cache->filled == cache->numLines) {
-        switch (replacementPolicy) {
-            case 1: replacementFIFO(cache, 0); break;
-            case 2: replacementLRU(cache, 0); break;
-            case 3: replacementRandom(cache, 0);
-        }
-    } else {
-        CacheLine* target = serchFinalyList(cache);
-        target->endereco = address;
-        target->indice = cache->filled++;
-    }
-}
-
-void setAssociativeMapping(Cache *cache, int replacementPolicy) {
-    printf(">> Using Set-Associative Mapping...\n");
-
-    if (replacementPolicy == 1) {
-        replacementFIFO(cache, 0);
-    }
-    else {
-        if (replacementPolicy == 2) {
-            replacementLRU(cache, 0);
-        } else {
-            if (replacementPolicy == 3) {
-                replacementRandom(cache, 0);
-            }
-        }
-    }
-
-    // TODO: Implementar a lógica de conjunto-associativo
-}
-
-// =============================================================
-// Funções de substituição
-
-void replacementFIFO(Cache *cache, int setIndex) {
-    printf(">> Replacement Policy: FIFO\n");
-    // TODO: Implementar substituição FIFO dentro do conjunto
-
-}
-
-void replacementLRU(Cache *cache, int setIndex) {
-    printf(">> Replacement Policy: LRU\n");
-    // TODO: Implementar substituição LRU dentro do conjunto
-}
-
-void replacementRandom(Cache *cache, int setIndex) {
-    printf(">> Replacement Policy: Random\n");
-    srand(time(NULL));
-    // TODO: Implementar substituição aleatória dentro do conjunto
+    return 0;
 }
