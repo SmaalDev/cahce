@@ -4,7 +4,7 @@
 #include "mapping.h"
 #include "replacement.h"
 
-static int RAM[] = {1,5,10,15,20, 3, 6, 9, 12, 18};
+static int RAM[] = {1,5,10,15,20};
 static const int TAM_RAM = sizeof(RAM)/sizeof(int);
 
 static inline int computeSetIndex(const Cache* c, int tag) {
